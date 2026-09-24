@@ -48,7 +48,7 @@ It combines:
 > Create `docs/screenshots/` and upload screenshots there using the suggested filenames below.
 
 ## 🏠 Admin Dashboard
-![Admin Dashboard](docs/screenshots/01-admin-dashboard.png)
+![Admin Dashboard](docs/screenshots/Dashboard-—-AI-Knowledge-Base.png)
 
 ## 📚 Knowledge Bases
 ![Knowledge Bases](docs/screenshots/02-knowledge-bases.png)
