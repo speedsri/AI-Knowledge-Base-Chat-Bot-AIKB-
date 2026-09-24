@@ -1,11 +1,685 @@
-# AI Knowledge Base - Complete Fresh Installation Package
+<div align="center">
 
-This repository contains:
+# 🤖 AI Knowledge Base Chat Bot (AIKB)
+### 🌐 Web Knowledge Base • 🧠 RAG • 🎙️ Voice • 💬 Public Chat • 🧩 Embeddable Website Widget
 
-- `ai-knowledge-base/` - PHP/Apache/MySQL application and Admin UI.
-- `dt-rag/` - Python RAG API and Qdrant stack.
+![PHP](https://img.shields.io/badge/PHP-8.x-777BB4?logo=php&logoColor=white)
+![MySQL](https://img.shields.io/badge/MySQL-Database-4479A1?logo=mysql&logoColor=white)
+![Docker](https://img.shields.io/badge/Docker-Ready-2496ED?logo=docker&logoColor=white)
+![Python](https://img.shields.io/badge/Python-RAG_API-3776AB?logo=python&logoColor=white)
+![Qdrant](https://img.shields.io/badge/Qdrant-Vector_DB-DC244C)
+![Gemini](https://img.shields.io/badge/Google_Gemini-AI-4285F4?logo=google&logoColor=white)
+![Voice](https://img.shields.io/badge/Voice-Enabled-8A2BE2)
+![Security](https://img.shields.io/badge/Security-Hardened-success)
 
-Production secrets, real `.env` files, database dumps, vector snapshots,
-logs, runtime data, rollback copies and old archives are excluded.
+**A reusable, Docker-ready AI knowledge platform for secure, grounded chat experiences from your own documents and websites.**
 
-Start with `INSTALL.md`.
+</div>
+
+---
+
+## ✨ What is AIKB?
+
+**AI Knowledge Base Chat Bot (AIKB)** is a complete web-based knowledge and chatbot platform.
+
+It combines:
+
+- 🖥️ PHP/MySQL administration application
+- 🧠 Python RAG API
+- 🔎 Qdrant vector search
+- 🤖 configurable AI providers
+- 📚 document and website knowledge ingestion
+- 💬 public browser chat
+- 🧩 embeddable website chat widget
+- 🎙️ voice controls
+- 👥 users, roles and permissions
+- 📊 analytics, conversations and feedback
+- 🧾 audit logs
+- ❤️ system health tools
+- 💾 backup administration
+- 🔐 production-oriented security controls
+
+> **Add your knowledge → AIKB retrieves relevant information → the assistant answers from that knowledge.**
+
+---
+
+# 📸 Screenshots
+
+> Create `docs/screenshots/` and upload screenshots there using the suggested filenames below.
+
+## 🏠 Admin Dashboard
+![Admin Dashboard](docs/screenshots/01-admin-dashboard.png)
+
+## 📚 Knowledge Bases
+![Knowledge Bases](docs/screenshots/02-knowledge-bases.png)
+
+## 📄 Document Management
+![Documents](docs/screenshots/03-documents.png)
+
+## 🌐 Website Sources
+![Website Sources](docs/screenshots/04-website-sources.png)
+
+## 💬 Public Chat
+![Public Chat](docs/screenshots/05-public-chat.png)
+
+## 🧩 Embedded Chat Widget
+![Embedded Widget](docs/screenshots/06-embedded-widget.png)
+
+## ⚙️ System Settings
+![System Settings](docs/screenshots/07-system-settings.png)
+
+## 🎙️ Voice Settings
+![Voice Settings](docs/screenshots/08-voice-settings.png)
+
+## 🤖 AI Provider Settings
+![AI Providers](docs/screenshots/09-ai-providers.png)
+
+## 🧠 RAG Settings / Diagnostics
+![RAG Settings](docs/screenshots/10-rag-settings.png)
+
+## 📊 Analytics
+![Analytics](docs/screenshots/11-analytics.png)
+
+## 💭 Conversations
+![Conversations](docs/screenshots/12-conversations.png)
+
+## ⭐ Feedback
+![Feedback](docs/screenshots/13-feedback.png)
+
+## 👥 Users & Roles
+![Users and Roles](docs/screenshots/14-users-roles.png)
+
+## 🧾 Audit Logs
+![Audit Logs](docs/screenshots/15-audit-logs.png)
+
+## ❤️ System Health
+![System Health](docs/screenshots/16-system-health.png)
+
+## 💾 Backups
+![Backups](docs/screenshots/17-backups.png)
+
+---
+
+# 🌈 Main Features
+
+## 🧠 Retrieval-Augmented Generation (RAG)
+AIKB uses a RAG workflow so answers can be grounded in your own knowledge instead of relying only on a general-purpose model.
+
+The RAG layer includes:
+- content preparation and chunking
+- embeddings
+- Qdrant vector storage/search
+- relevant-context retrieval
+- grounded answer generation
+- retrieval filtering
+- vector-dimension checks
+- non-destructive re-indexing support
+
+## 📚 Multiple Knowledge Bases
+Create and manage separate knowledge bases for departments, products, support topics, policies, manuals or internal documentation.
+
+## 📄 Document Management
+The Admin Panel includes document creation/import, viewing, editing, knowledge-base assignment and ingestion/index workflows.
+
+## 🌐 Website Knowledge Sources
+Administrators can add website sources. The RAG ingestion layer includes URL normalization, SSRF protection, redirect protection and request-size controls.
+
+## 🤖 AI Provider Management
+The Admin Panel includes provider configuration and server-side credential handling. The source tree contains Google Gemini integration and provider abstraction for additional providers.
+
+> 🔐 Never place production API keys in browser JavaScript or commit real credentials to GitHub.
+
+## 💬 Public Chat
+Public chat is available from:
+
+```text
+/chat
+```
+
+It can be independently enabled or disabled from **Admin → System Settings**. The server enforces the setting.
+
+## 🧩 Embeddable Website Widget
+Widget asset:
+
+```text
+/assets/chat-widget.js
+```
+
+Widget API:
+
+```text
+/widget/message
+```
+
+Example:
+
+```html
+<script
+  src="https://ai.example.com/assets/chat-widget.js"
+  data-api="https://ai.example.com"
+  data-title="AI Assistant"
+  data-greeting="Hello. How can I help you today?"
+  data-position="right"
+  data-language="en-US"
+  data-voice="true">
+</script>
+```
+
+Use the final snippet generated by **Admin → System Settings**.
+
+## 🛡️ Widget Origin Security
+Allowed origins are checked server-side.
+
+Example:
+
+```text
+https://example.com
+https://www.example.com
+```
+
+- ✅ approved origin → allowed
+- ❌ unapproved origin → HTTP 403
+- error → `origin_not_allowed`
+
+## 🔘 Widget ON/OFF + Emergency Master Switch
+Normal operational control is in **Admin → System Settings**.
+
+The server-level emergency switch remains in `.env`:
+
+```env
+CHAT_WIDGET_ENABLED=true
+```
+
+Normal administrators do not need to edit `.env` for everyday widget management.
+
+## 🌍 Public Base URL
+Set the public application URL in **Admin → System Settings**.
+
+Example:
+
+```text
+https://ai.example.com
+```
+
+AIKB generates useful URLs for:
+
+```text
+/login
+/chat
+/assets/chat-widget.js
+/widget/message
+```
+
+> ⚠️ This setting does not create DNS, SSL, Cloudflare Tunnel, NGINX or reverse-proxy configuration.
+
+## 🎨 Widget Customization
+Administrators can configure:
+- Widget Title
+- Greeting
+- Left/Right position
+- Language
+- Voice ON/OFF
+- Allowed Origins
+- Maximum attempts
+- Rate window
+- Widget ON/OFF
+- Generated embed snippet
+
+These normal settings are database-backed and intended to take effect without a source rebuild.
+
+## 🎙️ Voice Support
+The widget supports:
+
+```html
+data-voice="true"
+```
+
+or:
+
+```html
+data-voice="false"
+```
+
+When Widget Voice is OFF:
+- microphone controls are hidden/disabled
+- voice-mode widget requests are rejected server-side
+- error → `widget_voice_disabled`
+
+## 🚦 Rate Limiting
+Administrators can control widget request attempts and rate-window duration from System Settings.
+
+## 👥 Users
+AIKB includes authentication, session handling, user administration, password-reset infrastructure, CSRF protection and protected admin routes.
+
+## 🛡️ Roles & Permissions
+Role administration and role middleware are included for RBAC-style administrative access control.
+
+## 💭 Conversations
+Administrators can review conversation lists and conversation details. Chat-history infrastructure is included.
+
+## ⭐ Feedback
+A dedicated feedback administration area is included for reviewing chatbot feedback.
+
+## 📊 Analytics
+The Admin Panel includes analytics pages for chatbot and operational visibility.
+
+## 🧾 Audit Logs
+Administrative activity can be recorded in audit logs. System Settings updates are audit-tracked.
+
+## ❤️ System Health
+A System Health administration area is included for checking important components and integrations.
+
+## 🧪 RAG Diagnostics
+RAG diagnostics help check communication between AIKB, the RAG API, vector retrieval and configured providers.
+
+## 💾 Backup Administration
+AIKB includes a backup administration area. Production deployments should still use independent off-server backups.
+
+## 🕷️ Secure Website Ingestion
+DT-RAG includes ingestion protections and tests covering SSRF, redirects, normalization, request size, filtering, embedding batching, vector dimensions, re-index validation and grounding behavior.
+
+## 🧱 Docker Deployment
+AIKB includes Docker configuration under:
+
+```text
+ai-knowledge-base/docker/
+```
+
+DT-RAG includes:
+
+```text
+dt-rag/docker-compose.yml
+```
+
+---
+
+# 🏗️ Architecture
+
+```text
+Users / Website Visitors
+          |
+          v
+AIKB Web Application
+(Admin • Public Chat • Widget API)
+          |
+     +----+-------------------+
+     |                        |
+     v                        v
+   MySQL                  DT-RAG API
+                              |
+                       +------+------+
+                       |             |
+                       v             v
+                    Qdrant      AI Provider
+                    Vector DB   Gemini / etc.
+```
+
+---
+
+# 📁 Repository Structure
+
+```text
+.
+├── README.md
+├── INSTALL.md
+├── SHA256SUMS
+├── docs/
+│   ├── ARCHITECTURE.md
+│   ├── SECURITY_CHECKLIST.md
+│   └── screenshots/
+├── ai-knowledge-base/
+│   ├── admin/
+│   ├── app/
+│   ├── config/
+│   ├── database/
+│   ├── docker/
+│   ├── docs/
+│   ├── public/
+│   ├── scripts/
+│   ├── storage/
+│   ├── tests/
+│   ├── .env.example
+│   └── composer.json
+└── dt-rag/
+    ├── backend/
+    ├── tests/
+    ├── docker-compose.yml
+    ├── .env.example
+    └── README.md
+```
+
+---
+
+# 🚀 Fresh Installation Guide
+
+## ✅ Before You Start
+Recommended:
+- Ubuntu 22.04 / 24.04
+- Docker Engine
+- Docker Compose plugin
+- Internet access to pull images
+- Domain + HTTPS for production
+- AI provider API key
+- basic ability to edit a text file
+
+Check Docker:
+
+```bash
+docker --version
+docker compose version
+```
+
+## 🟣 1. Download the Project
+
+```bash
+git clone https://github.com/speedsri/AI-Knowledge-Base-Chat-Bot-AIKB-.git
+cd AI-Knowledge-Base-Chat-Bot-AIKB-
+```
+
+You should see:
+
+```text
+README.md
+INSTALL.md
+docs/
+ai-knowledge-base/
+dt-rag/
+```
+
+## 🔵 2. Configure DT-RAG
+
+```bash
+cd dt-rag
+cp .env.example .env
+nano .env
+```
+
+Fill the values required by your deployment, such as AI provider credentials, RAG authentication token, Qdrant settings and model/embedding configuration.
+
+> 🔐 Never commit `.env`.
+
+## 🟢 3. Start DT-RAG + Qdrant
+
+```bash
+docker compose up -d --build
+docker compose ps
+```
+
+Confirm the RAG API and Qdrant services are running.
+
+## 🟠 4. Configure AIKB
+
+```bash
+cd ../ai-knowledge-base
+cp .env.example .env
+nano .env
+```
+
+Configure database values, application/security settings, RAG API address/token and other environment-specific values.
+
+## 🔴 5. Build AIKB
+
+```bash
+docker compose -f docker/docker-compose.yml build app
+docker compose -f docker/docker-compose.yml up -d
+docker compose -f docker/docker-compose.yml ps
+```
+
+## 🟡 6. Run Database Migrations
+
+```bash
+docker compose -f docker/docker-compose.yml \
+  run --rm --no-deps app \
+  php scripts/migrate.php
+```
+
+## 🟤 7. Open the Application
+Common routes:
+
+```text
+/login
+/admin
+/chat
+```
+
+For production, configure DNS, HTTPS and your reverse proxy or Cloudflare Tunnel separately.
+
+## ⚙️ 8. Configure System Settings
+Open **Admin → System Settings** and set:
+- Public Base URL
+- Public Chat ON/OFF
+- Embedded Widget ON/OFF
+- Allowed Origins
+- Widget Title
+- Greeting
+- Position
+- Language
+- Widget Voice
+- Rate Limits
+
+## 🧩 9. Add the Widget to Your Website
+Copy the generated snippet from **Admin → System Settings** and paste it before the closing `</body>` tag of your website.
+
+Also add the website's exact origin to **Allowed Origins**.
+
+## 📚 10. Add Knowledge
+1. Create a Knowledge Base.
+2. Add/import documents.
+3. Add website sources if needed.
+4. Run ingestion/indexing.
+5. Test from Public Chat.
+
+## 🧪 11. Acceptance Tests
+
+### Public Chat
+When enabled:
+
+```text
+GET /chat → HTTP 200
+```
+
+### Allowed Widget Origin
+Expected:
+
+```text
+HTTP 200
+```
+
+### Unauthorized Origin
+Expected:
+
+```text
+HTTP 403
+origin_not_allowed
+```
+
+### Widget Disabled
+Expected:
+
+```text
+widget_disabled
+```
+
+### Voice Disabled
+Expected server response for a forged voice request:
+
+```text
+widget_voice_disabled
+```
+
+---
+
+# 🔐 Security Guidelines
+
+Exception: `.env.example` is acceptable only when it contains placeholders and no real credentials.
+
+## Production Recommendations
+✅ HTTPS  
+✅ strong database passwords  
+✅ change default/admin passwords  
+✅ keep API keys server-side  
+✅ protect internal RAG services  
+✅ keep MySQL private  
+✅ keep Qdrant private where possible  
+✅ configure exact Widget Allowed Origins  
+✅ enable backups  
+✅ test restore procedures  
+✅ review Audit Logs  
+
+---
+
+# 💾 Backup Recommendations
+Back up production data separately:
+
+```text
+MySQL database
+uploaded/source documents
+Qdrant/vector data
+private environment configuration
+reverse proxy configuration
+DNS/Cloudflare configuration documentation
+```
+
+Do not store sensitive production backups in a public GitHub repository.
+
+---
+
+# 🔄 Updating the Application
+Before an update:
+1. back up MySQL
+2. back up production `.env`
+3. back up source documents
+4. back up vector data if needed
+5. review release notes
+6. deploy updated source
+7. run migrations
+8. test RAG
+9. test Public Chat
+10. test Widget origin security
+11. test Voice
+12. check System Health
+
+---
+
+# 🩺 Troubleshooting
+
+## Check containers
+
+```bash
+docker ps
+```
+
+AIKB:
+
+```bash
+docker compose -f ai-knowledge-base/docker/docker-compose.yml ps
+```
+
+DT-RAG:
+
+```bash
+docker compose -f dt-rag/docker-compose.yml ps
+```
+
+## Widget does not appear
+Check:
+1. Widget is ON in System Settings.
+2. `.env` emergency master switch is enabled.
+3. Website origin is in Allowed Origins.
+4. Generated script URL is correct.
+5. HTTPS/browser console shows no blocked requests.
+6. `data-voice` matches the intended voice setting.
+
+## Chat does not answer from knowledge
+Check:
+1. Knowledge Base exists.
+2. Documents/web sources were ingested.
+3. RAG API is healthy.
+4. Qdrant is running.
+5. Provider credentials are valid.
+6. Embedding/model configuration matches indexed data.
+7. RAG diagnostics show no connection error.
+
+---
+
+# 🖼️ Screenshot Upload Guide
+
+Create:
+
+```text
+docs/screenshots/
+```
+
+Recommended filenames:
+
+```text
+01-admin-dashboard.png
+02-knowledge-bases.png
+03-documents.png
+04-website-sources.png
+05-public-chat.png
+06-embedded-widget.png
+07-system-settings.png
+08-voice-settings.png
+09-ai-providers.png
+10-rag-settings.png
+11-analytics.png
+12-conversations.png
+13-feedback.png
+14-users-roles.png
+15-audit-logs.png
+16-system-health.png
+17-backups.png
+```
+
+Upload screenshots with these names and they will appear automatically in the screenshot section near the top of this README.
+
+---
+
+# 📖 Additional Documentation
+
+- [`INSTALL.md`](INSTALL.md)
+- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)
+- [`docs/SECURITY_CHECKLIST.md`](docs/SECURITY_CHECKLIST.md)
+- [`ai-knowledge-base/WIDGET_INTEGRATION_GUIDE.md`](ai-knowledge-base/WIDGET_INTEGRATION_GUIDE.md)
+- [`dt-rag/README.md`](dt-rag/README.md)
+- [`dt-rag/API_CONTRACT.md`](dt-rag/API_CONTRACT.md)
+- [`dt-rag/SECURITY_PHASE_B.md`](dt-rag/SECURITY_PHASE_B.md)
+- [`dt-rag/TEST_PHASE_B.md`](dt-rag/TEST_PHASE_B.md)
+
+---
+
+# ✅ Release Checklist
+
+- [ ] No real `.env`
+- [ ] No API keys
+- [ ] No passwords
+- [ ] No SQL dump
+- [ ] No Qdrant snapshot
+- [ ] No logs
+- [ ] No rollback `.pre-*` files
+- [ ] No `.save*` files
+- [ ] README updated
+- [ ] INSTALL updated
+- [ ] screenshots updated
+- [ ] `SHA256SUMS` regenerated
+- [ ] fresh installation tested
+- [ ] Public Chat tested
+- [ ] Widget tested
+- [ ] Origin security tested
+- [ ] Voice ON/OFF tested
+- [ ] RAG retrieval tested
+
+---
+
+<div align="center">
+
+# 🚀 AIKB
+### Build your knowledge. Connect your website. Let AI answer from what matters.
+
+**PHP • MySQL • Docker • Python • Qdrant • RAG • Gemini • Voice • Secure Widget**
+
+⭐ If this project is useful, consider starring the repository.
+
+</div>
+
