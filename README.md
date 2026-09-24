@@ -51,52 +51,52 @@ It combines:
 ![Admin Dashboard](docs/screenshots/Dashboard-—-AI-Knowledge-Base.png)
 
 ## 📚 Knowledge Bases
-![Knowledge Bases](docs/screenshots/02-knowledge-bases.png)
+![Knowledge Bases](docs/screenshots/Analytics-—-AI-Knowledge-Base.png)
 
 ## 📄 Document Management
-![Documents](docs/screenshots/03-documents.png)
+![Documents](docs/screenshots/Documents-—-AI-Knowledge-Base.png)
 
 ## 🌐 Website Sources
-![Website Sources](docs/screenshots/04-website-sources.png)
+![Website Sources](docs/screenshots/Website-Sources-—-AI-Knowledge-Base.png)
 
 ## 💬 Public Chat
-![Public Chat](docs/screenshots/05-public-chat.png)
+![Public Chat](docs/screenshots/AI-Assistant.png)
 
 ## 🧩 Embedded Chat Widget
-![Embedded Widget](docs/screenshots/06-embedded-widget.png)
+![Embedded Widget](docs/screenshots/Dynamic-Technologies-Pvt-Ltd-—-Road-Tankers-Trailers-Heavy-Engineering.png)
 
 ## ⚙️ System Settings
-![System Settings](docs/screenshots/07-system-settings.png)
+![System Settings](docs/screenshots/System-Settings-—-AI-Knowledge-Base.png)
 
 ## 🎙️ Voice Settings
-![Voice Settings](docs/screenshots/08-voice-settings.png)
+![Voice Settings](docs/screenshots/Voice-Settings-—-AI-Knowledge-Base.png)
 
 ## 🤖 AI Provider Settings
-![AI Providers](docs/screenshots/09-ai-providers.png)
+![AI Providers](docs/screenshots/AI-Providers-—-AI-Knowledge-Base.png)
 
 ## 🧠 RAG Settings / Diagnostics
-![RAG Settings](docs/screenshots/10-rag-settings.png)
+![RAG Settings](docs/screenshots/RAG-Settings-—-AI-Knowledge-Base.png)
 
 ## 📊 Analytics
-![Analytics](docs/screenshots/11-analytics.png)
+![Analytics](docs/screenshots/Analytics-—-AI-Knowledge-Base.png)
 
 ## 💭 Conversations
-![Conversations](docs/screenshots/12-conversations.png)
+![Conversations](docs/screenshots/Conversations-—-AI-Knowledge-Base.png)
 
 ## ⭐ Feedback
-![Feedback](docs/screenshots/13-feedback.png)
+![Feedback](docs/screenshots/Feedback-—-AI-Knowledge-Base.png)
 
 ## 👥 Users & Roles
-![Users and Roles](docs/screenshots/14-users-roles.png)
+![Users and Roles](docs/screenshots/Roles-—-AI-Knowledge-Base.png)
 
 ## 🧾 Audit Logs
-![Audit Logs](docs/screenshots/15-audit-logs.png)
+![Audit Logs](docs/screenshots/Audit-Logs-—-AI-Knowledge-Base.png)
 
 ## ❤️ System Health
-![System Health](docs/screenshots/16-system-health.png)
+![System Health](docs/screenshots/System-Health-—-AI-Knowledge-Base.png)
 
 ## 💾 Backups
-![Backups](docs/screenshots/17-backups.png)
+![Backups](docs/screenshots/Backups-—-AI-Knowledge-Base.png)
 
 ---
 
