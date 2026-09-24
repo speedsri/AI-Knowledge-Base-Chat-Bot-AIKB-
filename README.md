@@ -51,7 +51,7 @@ It combines:
 ![Admin Dashboard](docs/screenshots/Dashboard-—-AI-Knowledge-Base.png)
 
 ## 📚 Knowledge Bases
-![Knowledge Bases](docs/screenshots/Analytics-—-AI-Knowledge-Base.png)
+![Knowledge Bases](docs/screenshots/Knowledge-Bases-—-AI-Knowledge-Base.png)
 
 ## 📄 Document Management
 ![Documents](docs/screenshots/Documents-—-AI-Knowledge-Base.png)
