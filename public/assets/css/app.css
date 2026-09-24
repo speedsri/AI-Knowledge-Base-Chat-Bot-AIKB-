@@ -1,0 +1,23 @@
+body {
+    background-color: #f5f6f8;
+}
+
+#app-shell nav a.nav-link.disabled {
+    pointer-events: none;
+}
+
+.card {
+    border: none;
+    border-radius: 0.75rem;
+}
+
+.dropdown-menu form {
+    margin: 0;
+}
+
+.dropdown-menu form button.dropdown-item {
+    width: 100%;
+    text-align: left;
+    background: none;
+    border: none;
+}

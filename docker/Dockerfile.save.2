@@ -1,0 +1,49 @@
+FROM php:8.3-apache
+
+# --- System dependencies -----------------------------------------------------
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        cron \
+        libzip-dev \
+        libpng-dev \
+        libonig-dev \
+        libxml2-dev \
+        unzip \
+        git \
+    && docker-php-ext-install pdo_mysql mbstring zip gd xml \
+    && docker-php-ext-configure gd \
+    && pecl install redis && docker-php-ext-enable redis \
+    && apt-get clean && rm -rf /var/lib/apt/lists/*
+
+# sodium is bundled with PHP >= 7.2 but the extension still needs enabling
+RUN docker-php-ext-install sodium
+
+# --- Apache config ------------------------------------------------------------
+RUN a2enmod rewrite
+COPY docker/apache-vhost.conf /etc/apache2/sites-available/000-default.conf
+
+# --- Composer -----------------------------------------------------------------
+COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
+
+WORKDIR /var/www/html
+
+COPY composer.json ./
+RUN composer install --no-dev --no-interaction --no-progress --optimize-autoloader || true
+
+COPY . .
+
+# --- Permissions --------------------------------------------------------------
+RUN mkdir -p storage/documents storage/logs storage/cache \
+    && chown -R www-data:www-data /var/www/html/storage \
+    && chmod -R 750 /var/www/html/storage
+
+# --- Cron for the background worker (see docs/cron.md) -----------------------
+COPY docker/crontab /etc/cron.d/aikb-worker
+RUN chmod 0644 /etc/cron.d/aikb-worker && crontab -u www-data /etc/cron.d/aikb-worker
+
+# --- Entrypoint: run cron in the background, Apache in the foreground --------
+COPY docker/entrypoint.sh /usr/local/bin/entrypoint.sh
+RUN chmod +x /usr/local/bin/entrypoint.sh
+
+EXPOSE 80
+
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]

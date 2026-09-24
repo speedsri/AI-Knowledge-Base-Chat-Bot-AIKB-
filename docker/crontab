@@ -1,0 +1,4 @@
+# AIKB scheduled jobs
+#
+# No recurring jobs are currently required in production.
+# Background worker/provider credential sync are intentionally disabled.

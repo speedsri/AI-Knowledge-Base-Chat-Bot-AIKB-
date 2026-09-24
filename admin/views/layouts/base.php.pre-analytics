@@ -1,0 +1,95 @@
+<?php
+
+use function App\Core\e;
+use App\Auth\AuthService;
+
+$currentPath = parse_url($_SERVER['REQUEST_URI'] ?? '/', PHP_URL_PATH);
+
+/**
+ * Nav items reflect the full admin section list from the spec (§20).
+ *
+ * PHASE A: Knowledge Bases, Categories, Documents, Website Sources,
+ * AI Providers, RAG Settings, and System Health are now real routes.
+ * Voice Settings, Roles, Conversations, Feedback, Analytics, Audit Logs,
+ * System Settings, and Backups remain disabled/"soon" — out of scope for
+ * this phase (Voice Settings has schema-only DB support as of Phase A;
+ * it is deliberately NOT activated here).
+ */
+$nav = [
+    ['label' => 'Dashboard', 'href' => '/admin', 'icon' => 'speedometer2'],
+    ['label' => 'Knowledge Bases', 'href' => '/admin/knowledge-bases', 'icon' => 'collection'],
+    ['label' => 'Categories', 'href' => '/admin/categories', 'icon' => 'tags'],
+    ['label' => 'Documents', 'href' => '/admin/documents', 'icon' => 'file-earmark-text'],
+    ['label' => 'Website Sources', 'href' => '/admin/website-sources', 'icon' => 'globe'],
+    ['label' => 'AI Providers', 'href' => '/admin/ai-providers', 'icon' => 'cpu'],
+    ['label' => 'RAG Settings', 'href' => '/admin/rag-settings', 'icon' => 'sliders'],
+    ['label' => 'Voice Settings', 'href' => '/admin/voice-settings', 'icon' => 'mic'],
+    ['label' => 'Users', 'href' => '/admin/users', 'icon' => 'people'],
+    ['label' => 'Roles', 'href' => '#', 'icon' => 'shield-lock', 'disabled' => true],
+    ['label' => 'Conversations', 'href' => '/admin/conversations', 'icon' => 'chat-dots'],
+    ['label' => 'Feedback', 'href' => '/admin/feedback', 'icon' => 'hand-thumbs-up'],
+    ['label' => 'Analytics', 'href' => '#', 'icon' => 'graph-up', 'disabled' => true],
+    ['label' => 'Audit Logs', 'href' => '#', 'icon' => 'journal-text', 'disabled' => true],
+    ['label' => 'System Health', 'href' => '/admin/system-health', 'icon' => 'heart-pulse'],
+    ['label' => 'System Settings', 'href' => '#', 'icon' => 'gear', 'disabled' => true],
+    ['label' => 'Backups', 'href' => '#', 'icon' => 'archive', 'disabled' => true],
+];
+
+$currentUser = AuthService::user();
+?>
+<!DOCTYPE html>
+<html lang="en" data-bs-theme="light">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title><?= e($title ?? 'Dashboard') ?> — AI Knowledge Base</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.min.css" rel="stylesheet">
+    <link href="/assets/css/app.css" rel="stylesheet">
+</head>
+<body>
+<div class="d-flex" id="app-shell">
+    <nav class="d-flex flex-column flex-shrink-0 p-3 bg-dark text-white" style="width: 260px; min-height: 100vh;">
+        <a href="/admin" class="d-flex align-items-center mb-3 text-white text-decoration-none">
+            <span class="fs-5 fw-semibold">AI Knowledge Base</span>
+        </a>
+        <hr class="text-white-50">
+        <ul class="nav nav-pills flex-column mb-auto">
+            <?php foreach ($nav as $item): ?>
+                <li class="nav-item">
+                    <a href="<?= e($item['href']) ?>"
+                       class="nav-link text-white <?= $currentPath === $item['href'] ? 'active' : '' ?> <?= !empty($item['disabled']) ? 'disabled opacity-50' : '' ?>"
+                       <?= !empty($item['disabled']) ? 'aria-disabled="true" tabindex="-1"' : '' ?>>
+                        <i class="bi bi-<?= e($item['icon']) ?> me-2"></i><?= e($item['label']) ?>
+                        <?php if (!empty($item['disabled'])): ?>
+                            <span class="badge text-bg-secondary float-end">soon</span>
+                        <?php endif; ?>
+                    </a>
+                </li>
+            <?php endforeach; ?>
+        </ul>
+        <hr class="text-white-50">
+        <div class="dropdown">
+            <a href="#" class="d-flex align-items-center text-white text-decoration-none dropdown-toggle"
+               data-bs-toggle="dropdown">
+                <i class="bi bi-person-circle me-2 fs-5"></i>
+                <strong><?= e($currentUser['name'] ?? 'Account') ?></strong>
+            </a>
+            <ul class="dropdown-menu dropdown-menu-dark text-small shadow">
+                <li>
+                    <form method="POST" action="/logout">
+                        <?= \App\Auth\Csrf::field() ?>
+                        <button type="submit" class="dropdown-item">Sign out</button>
+                    </form>
+                </li>
+            </ul>
+        </div>
+    </nav>
+
+    <main class="flex-grow-1 p-4">
+        <?= $content ?? '' ?>
+    </main>
+</div>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+</body>
+</html>

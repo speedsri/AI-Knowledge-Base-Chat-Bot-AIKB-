@@ -1,0 +1,6 @@
+# Installed to /etc/cron.d/aikb-worker inside the app container.
+# Must end with a newline; cron.d files require the user field.
+
+* * * * * www-data /usr/local/bin/php /var/www/html/scripts/worker.php >> /var/www/html/storage/logs/worker.log 2>&1
+
+* * * * * www-data /usr/local/bin/php /var/www/html/scripts/provider_sync.php >> /var/www/html/storage/logs/provider-sync.log 2>&1

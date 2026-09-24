@@ -1,0 +1,828 @@
+<?php
+
+declare(strict_types=1);
+
+namespace App\Services;
+
+use App\Core\Database;
+use App\Core\Logger;
+use PDO;
+
+/**
+ * PHASE C V3. Focused correction on top of V2 (which fixed Blockers 1-4
+ * from the earlier review). This round of live-code review found three
+ * further correctness issues (A, B, C) plus two robustness gaps (D, E).
+ * All V2 behavior is preserved; nothing below removes prior functionality.
+ *
+ * BLOCKER A FIX (stale unpublish must be fail-safe): reconcileStale() now
+ * treats a failed is_published=false reindex call as a FAILURE of that
+ * page's stale operation, not a logged-and-ignored warning. MySQL's
+ * is_published is rolled back to 1 if the Qdrant sync fails, so MySQL and
+ * Qdrant never disagree about whether a page is published. Failures are
+ * counted in a new `documents_stale_failed` counter, distinct from
+ * `documents_stale` (which now means "verified successfully unpublished
+ * in both MySQL and Qdrant").
+ *
+ * BLOCKER B FIX (retry indexing after a previous failure): document_versions
+ * now carries `rag_index_status` ('pending'/'indexed'/'failed'),
+ * `rag_indexed_at`, `rag_last_error` (migration 0013 -- see that file's
+ * own header for why it is unrelated to V1's removed enum migration of
+ * the same number). A page whose content_hash is unchanged is ONLY
+ * treated as truly "unchanged" (no action) if its current version's
+ * rag_index_status is 'indexed'. If 'pending' or 'failed', the SAME
+ * version is retried via /v1/reindex without creating a new
+ * document_versions row (the content itself hasn't changed -- only its
+ * indexing state needs to catch up). A successful retry also triggers
+ * cleanup of any lingering 'superseded' versions for that document
+ * (see cleanupSupersededVersions()), covering the case where an earlier
+ * changed-page reindex failure left an old version's vectors never
+ * deleted.
+ *
+ * BLOCKER C FIX (website source identity must not drift): enforced in
+ * WebsiteSourceController::update() (server-side), which calls this
+ * class's countImportedDocuments() before allowing knowledge_base_id or
+ * origin_url to change -- see that controller.
+ *
+ * ROBUSTNESS D FIX (no concurrent crawls per source): startCrawl() now
+ * checks for an existing status='running' website_crawl_runs row for the
+ * same website_source_id before starting a new RAG job.
+ *
+ * ROBUSTNESS E FIX (expired prepared results): pollAndImport() now
+ * finalizes the run as 'failed', sets website_sources.last_error, and
+ * transitions status to 'error' (never overriding 'paused') when
+ * pages_available=false -- no stale reconciliation and no document
+ * mutation happens on this path, since there is nothing reliable to act on.
+ *
+ * ---- V2 behavior preserved from here down ----
+ *
+ * BLOCKER 1 (V2): a changed page's flow is: capture the PREVIOUS
+ * current_version_id BEFORE any write, commit the new version, reindex
+ * the NEW version, and ONLY IF that succeeds call
+ * deleteDocumentVersion(previousVersionId). A failed new-version reindex
+ * never triggers a delete of the old version's vectors.
+ *
+ * BLOCKER 2 (V2): website source deletion refusal lives in
+ * WebsiteSourceController::delete() via countImportedDocuments().
+ *
+ * BLOCKER 3 (V2): on a successful, sufficiently-complete crawl,
+ * website_sources.status recovers from 'error' to 'active' (never
+ * overriding 'paused') -- finalizeSuccessfulCrawl().
+ *
+ * BLOCKER 4 (V2): lives in app/jobs.py (RAG side) -- unaffected here.
+ *
+ * BLOCKER 5 / RAG reindex failure accounting (V2): `documents_indexing_failed`
+ * distinct from `documents_failed`; stale mass-unpublish gated on zero
+ * crawl failures, zero MySQL-import failures, and zero indexing failures.
+ *
+ * SOURCE TYPE (V2): 'website_crawl' (pre-existing enum value); V1's
+ * removed migration 0013 ('website' enum value) stays removed.
+ */
+final class WebsiteCrawlImporter
+{
+    public function __construct(private RagApiClient $ragClient)
+    {
+    }
+
+    public function startCrawl(array $source, ?int $adminId): array
+    {
+        if ($source['status'] === 'paused') {
+            return ['ok' => false, 'error' => 'source_paused'];
+        }
+
+        $pdo = Database::connection();
+
+        // ROBUSTNESS D: refuse a second concurrent crawl for the same source.
+        $runningCheck = $pdo->prepare(
+            "SELECT id FROM website_crawl_runs WHERE website_source_id = :source_id AND status = 'running' LIMIT 1"
+        );
+        $runningCheck->execute([':source_id' => $source['id']]);
+        if ($runningCheck->fetchColumn() !== false) {
+            return ['ok' => false, 'error' => 'crawl_already_running'];
+        }
+
+        $stmt = $pdo->prepare(
+            "INSERT INTO website_crawl_runs (website_source_id, status, started_at, created_by)
+             VALUES (:source_id, 'running', NOW(), :created_by)"
+        );
+        $stmt->execute([':source_id' => $source['id'], ':created_by' => $adminId]);
+        $runId = (int) $pdo->lastInsertId();
+
+        $excludedPatterns = json_decode($source['excluded_path_patterns'] ?? '[]', true) ?: [];
+
+        $result = $this->ragClient->ingestionStart([
+            'knowledge_base_id' => (int) $source['knowledge_base_id'],
+            'origin_url' => $source['origin_url'],
+            'max_pages' => (int) $source['max_pages'],
+            'crawl_delay_seconds' => (float) $source['crawl_delay_seconds'],
+            'request_timeout_seconds' => (float) $source['request_timeout_seconds'],
+            'max_document_size_kb' => (int) $source['max_document_size_kb'],
+            'excluded_path_patterns' => $excludedPatterns,
+        ], externalJobId: (string) $runId);
+
+        if (empty($result['ok'])) {
+            $pdo->prepare(
+                "UPDATE website_crawl_runs SET status = 'failed', error_message = :err, completed_at = NOW() WHERE id = :id"
+            )->execute([':err' => 'Could not start crawl: ' . ($result['error'] ?? 'unknown'), ':id' => $runId]);
+
+            $pdo->prepare("UPDATE website_sources SET last_error = :err WHERE id = :id")
+                ->execute([':err' => 'Crawl failed to start: ' . ($result['error'] ?? 'unknown'), ':id' => $source['id']]);
+
+            Logger::warning('website_crawl.start_failed', ['source_id' => $source['id'], 'run_id' => $runId, 'reason' => $result['error'] ?? 'unknown']);
+            return ['ok' => false, 'error' => $result['error'] ?? 'rag_api_unreachable', 'run_id' => $runId];
+        }
+
+        $jobId = $result['job_id'];
+        $pdo->prepare("UPDATE website_crawl_runs SET rag_job_id = :job_id WHERE id = :id")
+            ->execute([':job_id' => $jobId, ':id' => $runId]);
+
+        Logger::audit('website_crawl.started', $adminId, 'website_source', (string) $source['id'], ['run_id' => $runId, 'job_id' => $jobId]);
+
+        return ['ok' => true, 'run_id' => $runId];
+    }
+
+    public function pollAndImport(int $runId): array
+    {
+        $pdo = Database::connection();
+        $run = $pdo->prepare('SELECT * FROM website_crawl_runs WHERE id = :id');
+        $run->execute([':id' => $runId]);
+        $run = $run->fetch();
+
+        if (!$run) {
+            return ['ok' => false, 'status' => 'not_found', 'error' => 'Crawl run not found'];
+        }
+        if ($run['status'] !== 'running') {
+            return ['ok' => true, 'status' => $run['status'], 'summary' => $run];
+        }
+        if (!$run['rag_job_id']) {
+            return ['ok' => false, 'status' => 'running', 'error' => 'Crawl has no RAG job id yet'];
+        }
+
+        $jobStatus = $this->ragClient->ingestionStatus($run['rag_job_id']);
+        if (empty($jobStatus['ok'])) {
+            return ['ok' => false, 'status' => 'running', 'error' => 'Could not reach RAG API to check status'];
+        }
+
+        $ragStatus = $jobStatus['status'] ?? 'unknown';
+        if ($ragStatus === 'pending' || $ragStatus === 'running') {
+            return ['ok' => true, 'status' => 'running'];
+        }
+
+        if ($ragStatus === 'failed') {
+            $errorMessage = $jobStatus['error'] ?? 'Crawl failed on the RAG backend';
+            $this->finalizeRun($runId, 'failed', $errorMessage, []);
+            $pdo->prepare(
+                "UPDATE website_sources SET last_error = :err, status = CASE WHEN status = 'paused' THEN status ELSE 'error' END WHERE id = :id"
+            )->execute([':err' => $errorMessage, ':id' => $run['website_source_id']]);
+            Logger::warning('website_crawl.failed', ['run_id' => $runId, 'reason' => $errorMessage]);
+            return ['ok' => true, 'status' => 'failed', 'summary' => ['error_message' => $errorMessage]];
+        }
+
+        $resultResp = $this->ragClient->ingestionResult($run['rag_job_id']);
+        if (empty($resultResp['ok'])) {
+            return ['ok' => false, 'status' => 'running', 'error' => 'Job completed but result could not be fetched -- retry Check Status'];
+        }
+
+        // ROBUSTNESS E: prepared results expired on the RAG side before
+        // AIKB could import them. Nothing reliable exists to act on --
+        // finalize as a real failure, do NOT touch any existing document,
+        // do NOT run stale reconciliation.
+        if (empty($resultResp['pages_available'])) {
+            $errorMessage = 'Crawl result expired on the RAG backend before it could be imported '
+                . '(job state is in-memory and time-limited). No documents were changed. Try crawling again.';
+            $this->finalizeRun($runId, 'failed', $errorMessage, []);
+            $pdo->prepare(
+                "UPDATE website_sources SET last_error = :err, status = CASE WHEN status = 'paused' THEN status ELSE 'error' END WHERE id = :id"
+            )->execute([':err' => $errorMessage, ':id' => $run['website_source_id']]);
+            Logger::warning('website_crawl.result_expired', ['run_id' => $runId]);
+            return ['ok' => true, 'status' => 'failed', 'summary' => ['error_message' => $errorMessage]];
+        }
+
+        $source = $pdo->prepare('SELECT * FROM website_sources WHERE id = :id');
+        $source->execute([':id' => $run['website_source_id']]);
+        $source = $source->fetch();
+
+        $counts = ['new' => 0, 'changed' => 0, 'unchanged' => 0, 'failed' => 0, 'indexing_failed' => 0];
+        $seenDocumentIds = [];
+        $cleanupNeeded = false;
+
+        foreach ($resultResp['pages'] as $page) {
+            if (empty($page['success'])) {
+                $counts['failed']++;
+                Logger::warning('website_crawl.page_failed', ['run_id' => $runId, 'url' => $page['canonical_url'] ?? null, 'reason' => $page['error'] ?? null]);
+                continue;
+            }
+            try {
+                [$outcome, $documentId, $indexingFailed, $cleanupFailed] = $this->importPage($page, $source);
+                $counts[$outcome]++;
+                if ($indexingFailed) {
+                    $counts['indexing_failed']++;
+                }
+                if ($cleanupFailed) {
+                    $cleanupNeeded = true;
+                }
+                if ($documentId !== null) {
+                    $seenDocumentIds[] = $documentId;
+                }
+            } catch (\Throwable $e) {
+                $counts['failed']++;
+                Logger::error('website_crawl.import_page_exception', ['run_id' => $runId, 'url' => $page['canonical_url'] ?? null, 'message' => $e->getMessage()]);
+            }
+        }
+
+        $staleCount = 0;
+        $staleFailedCount = 0;
+        $reportedFailedByRag = (int) ($jobStatus['documents_failed'] ?? 0);
+        $crawlIsComplete = $reportedFailedByRag === 0 && $counts['failed'] === 0 && $counts['indexing_failed'] === 0;
+        if ($crawlIsComplete) {
+            [$staleCount, $staleFailedCount] = $this->reconcileStale((int) $source['id'], $seenDocumentIds, $run['created_by']);
+        } else {
+            Logger::info('website_crawl.stale_reconciliation_skipped', [
+                'run_id' => $runId, 'reason' => 'crawl_had_failures',
+                'rag_reported_failed' => $reportedFailedByRag,
+                'import_failed' => $counts['failed'], 'indexing_failed' => $counts['indexing_failed'],
+            ]);
+        }
+
+        $errorNoteParts = [];
+        if ($cleanupNeeded) {
+            $errorNoteParts[] = 'One or more previous-version vector cleanups failed -- see logs for affected document_version_id(s). MySQL content is correct regardless.';
+        }
+        if ($staleFailedCount > 0) {
+            $errorNoteParts[] = "{$staleFailedCount} page(s) could not be safely unpublished (Qdrant sync failed) -- they remain published in MySQL and searchable, unchanged, pending retry on the next crawl.";
+        }
+        $errorNote = empty($errorNoteParts) ? null : implode(' ', $errorNoteParts);
+
+        $this->finalizeRun($runId, 'completed', $errorNote, [
+            'pages_crawled' => (int) ($jobStatus['pages_crawled'] ?? 0),
+            'documents_new' => $counts['new'],
+            'documents_changed' => $counts['changed'],
+            'documents_unchanged' => $counts['unchanged'],
+            'documents_failed' => $counts['failed'],
+            'documents_indexing_failed' => $counts['indexing_failed'],
+            'documents_stale' => $staleCount,
+            'documents_stale_failed' => $staleFailedCount,
+            'cleanup_needed' => $cleanupNeeded,
+        ]);
+
+        if ($crawlIsComplete) {
+            $this->finalizeSuccessfulCrawl((int) $source['id']);
+        } else {
+            $pdo->prepare("UPDATE website_sources SET last_crawled_at = NOW() WHERE id = :id")
+                ->execute([':id' => $source['id']]);
+        }
+
+        Logger::audit('website_crawl.completed', $run['created_by'], 'website_source', (string) $source['id'], [
+            'run_id' => $runId, 'counts' => $counts, 'stale' => $staleCount,
+            'stale_failed' => $staleFailedCount, 'cleanup_needed' => $cleanupNeeded,
+        ]);
+
+        return ['ok' => true, 'status' => 'completed', 'summary' => [
+            'pages_crawled' => (int) ($jobStatus['pages_crawled'] ?? 0),
+            'documents_new' => $counts['new'],
+            'documents_changed' => $counts['changed'],
+            'documents_unchanged' => $counts['unchanged'],
+            'documents_failed' => $counts['failed'],
+            'documents_indexing_failed' => $counts['indexing_failed'],
+            'documents_stale' => $staleCount,
+            'documents_stale_failed' => $staleFailedCount,
+            'cleanup_needed' => $cleanupNeeded,
+        ]];
+    }
+
+    private function finalizeSuccessfulCrawl(int $sourceId): void
+    {
+        $pdo = Database::connection();
+        $pdo->prepare(
+            "UPDATE website_sources SET
+                last_crawled_at = NOW(),
+                last_error = NULL,
+                status = CASE WHEN status = 'paused' THEN status ELSE 'active' END
+             WHERE id = :id"
+        )->execute([':id' => $sourceId]);
+    }
+
+    /**
+     * @return array{0: string, 1: int|null, 2: bool, 3: bool} [outcome, documentId, indexingFailed, cleanupFailed]
+     */
+    private function importPage(array $page, array $source): array
+    {
+        $pdo = Database::connection();
+        $canonicalUrl = $page['canonical_url'];
+        $normalizedContent = $page['normalized_content'];
+        $contentHash = $page['content_hash'] ?? hash('sha256', $normalizedContent);
+        $title = $page['title'] ?: $canonicalUrl;
+
+        $existing = $pdo->prepare(
+            'SELECT d.id AS document_id, d.current_version_id, d.is_published,
+                    dv.content_hash AS current_hash, dv.rag_index_status
+             FROM documents d
+             JOIN document_versions dv ON dv.id = d.current_version_id
+             WHERE d.website_source_id = :source_id AND dv.canonical_url = :url
+             LIMIT 1'
+        );
+        $existing->execute([':source_id' => $source['id'], ':url' => $canonicalUrl]);
+        $existing = $existing->fetch();
+
+        if ($existing) {
+            $documentId = (int) $existing['document_id'];
+
+            if ($existing['current_hash'] === $contentHash) {
+                // BLOCKER B: "unchanged" is only true if the current
+                // version is ALSO already successfully indexed AND
+                // currently published. Otherwise this is a RETRY, not a
+                // no-op -- an earlier draft (V2) incorrectly conflated
+                // "hash unchanged" with "successfully indexed", which
+                // could leave a page permanently unindexed after one
+                // transient reindex failure.
+                $alreadyGood = $existing['rag_index_status'] === 'indexed' && (int) $existing['is_published'] === 1;
+                if ($alreadyGood) {
+                    return ['unchanged', $documentId, false, false];
+                }
+
+                $indexingFailed = $this->reindexExistingVersion(
+                    $documentId, (int) $existing['current_version_id'], $source, $title, $canonicalUrl, $normalizedContent, $contentHash
+                );
+                $cleanupFailed = false;
+                if (!$indexingFailed) {
+                    $cleanupFailed = $this->cleanupSupersededVersions($documentId, (int) $existing['current_version_id'], $source);
+                }
+                return ['unchanged', $documentId, $indexingFailed, $cleanupFailed];
+            }
+
+            $previousVersionId = (int) $existing['current_version_id'];
+
+            // A crawled page may revert to content that already exists in an
+            // older version of the same document. Because document_versions
+            // has a unique (document_id, content_hash) constraint, do not
+            // insert a duplicate row. Re-activate and reindex the historical
+            // version instead. Its old Qdrant vectors may already have been
+            // removed when it was superseded, so reindexing is mandatory.
+            $historicalStmt = $pdo->prepare(
+                'SELECT id
+                 FROM document_versions
+                 WHERE document_id = :document_id
+                   AND content_hash = :content_hash
+                 LIMIT 1'
+            );
+            $historicalStmt->execute([
+                ':document_id' => $documentId,
+                ':content_hash' => $contentHash,
+            ]);
+            $historicalVersionId = $historicalStmt->fetchColumn();
+
+            if ($historicalVersionId !== false) {
+                $historicalVersionId = (int) $historicalVersionId;
+
+                // Reindex FIRST. Do not change MySQL's current version until
+                // Qdrant has successfully accepted the historical version.
+                $reindexResult = $this->ragClient->reindexDocumentVersion([
+                    'knowledge_base_id' => (int) $source['knowledge_base_id'],
+                    'document_id' => $documentId,
+                    'document_version_id' => $historicalVersionId,
+                    'title' => $title,
+                    'canonical_url' => $canonicalUrl,
+                    'normalized_content' => $normalizedContent,
+                    'content_hash' => $contentHash,
+                    'is_published' => true,
+                ]);
+
+                if (empty($reindexResult['ok'])) {
+                    $this->markVersionIndexState(
+                        $historicalVersionId,
+                        'failed',
+                        $reindexResult['error'] ?? 'unknown'
+                    );
+
+                    Logger::warning('website_crawl.historical_version_reindex_failed', [
+                        'document_id' => $documentId,
+                        'document_version_id' => $historicalVersionId,
+                        'reason' => $reindexResult['error'] ?? 'unknown',
+                    ]);
+
+                    // Existing current version and its vectors remain untouched.
+                    return ['changed', $documentId, true, false];
+                }
+
+                // Qdrant is ready. Now atomically make the historical version
+                // current in MySQL.
+                $pdo->beginTransaction();
+                try {
+                    $pdo->prepare(
+                        "UPDATE document_versions
+                         SET status = CASE
+                             WHEN id = :target_id THEN 'active'
+                             ELSE 'superseded'
+                         END
+                         WHERE document_id = :document_id"
+                    )->execute([
+                        ':target_id' => $historicalVersionId,
+                        ':document_id' => $documentId,
+                    ]);
+
+                    $pdo->prepare(
+                        'UPDATE documents
+                         SET current_version_id = :vid,
+                             is_published = 1,
+                             updated_at = NOW()
+                         WHERE id = :id'
+                    )->execute([
+                        ':vid' => $historicalVersionId,
+                        ':id' => $documentId,
+                    ]);
+
+                    $pdo->commit();
+                } catch (\Throwable $e) {
+                    $pdo->rollBack();
+
+                    // We indexed the historical version but could not activate
+                    // it in MySQL. Remove those newly restored vectors so the
+                    // previous current version remains authoritative.
+                    $cleanupResult = $this->ragClient->deleteDocumentVersion(
+                        $historicalVersionId
+                    );
+
+                    if (empty($cleanupResult['ok'])) {
+                        Logger::warning(
+                            'website_crawl.historical_version_rollback_cleanup_failed',
+                            [
+                                'document_id' => $documentId,
+                                'document_version_id' => $historicalVersionId,
+                                'reason' => $cleanupResult['error'] ?? 'unknown',
+                            ]
+                        );
+                    }
+
+                    throw $e;
+                }
+
+                $this->markVersionIndexState(
+                    $historicalVersionId,
+                    'indexed',
+                    null
+                );
+
+                // Only after the historical version is both indexed and
+                // current do we remove vectors belonging to superseded
+                // versions, including the previously-current version.
+                $cleanupFailed = $this->cleanupSupersededVersions(
+                    $documentId,
+                    $historicalVersionId,
+                    $source
+                );
+
+                return ['changed', $documentId, false, $cleanupFailed];
+            }
+
+            $newVersionId = $this->createNewVersion($pdo, $documentId, $canonicalUrl, $normalizedContent, $contentHash, $source);
+
+            $reindexResult = $this->ragClient->reindexDocumentVersion([
+                'knowledge_base_id' => (int) $source['knowledge_base_id'],
+                'document_id' => $documentId,
+                'document_version_id' => $newVersionId,
+                'title' => $title,
+                'canonical_url' => $canonicalUrl,
+                'normalized_content' => $normalizedContent,
+                'content_hash' => $contentHash,
+                'is_published' => true,
+            ]);
+
+            if (empty($reindexResult['ok'])) {
+                $this->markVersionIndexState($newVersionId, 'failed', $reindexResult['error'] ?? 'unknown');
+                Logger::warning('website_crawl.reindex_failed', [
+                    'document_id' => $documentId, 'document_version_id' => $newVersionId,
+                    'reason' => $reindexResult['error'] ?? 'unknown',
+                ]);
+                return ['changed', $documentId, true, false];
+            }
+
+            $this->markVersionIndexState($newVersionId, 'indexed', null);
+
+            $cleanupFailed = false;
+            $deleteResult = $this->ragClient->deleteDocumentVersion($previousVersionId);
+            if (empty($deleteResult['ok'])) {
+                Logger::warning('website_crawl.previous_version_cleanup_failed', [
+                    'document_id' => $documentId, 'previous_version_id' => $previousVersionId,
+                    'reason' => $deleteResult['error'] ?? 'unknown',
+                ]);
+                $cleanupFailed = true;
+            }
+
+            return ['changed', $documentId, false, $cleanupFailed];
+        }
+
+        $documentId = $this->createNewDocument($pdo, $source, $title, $canonicalUrl, $normalizedContent, $contentHash);
+        $newVersionId = $this->getCurrentVersionId($pdo, $documentId);
+
+        $reindexResult = $this->ragClient->reindexDocumentVersion([
+            'knowledge_base_id' => (int) $source['knowledge_base_id'],
+            'document_id' => $documentId,
+            'document_version_id' => $newVersionId,
+            'title' => $title,
+            'canonical_url' => $canonicalUrl,
+            'normalized_content' => $normalizedContent,
+            'content_hash' => $contentHash,
+            'is_published' => true,
+        ]);
+
+        $indexingFailed = empty($reindexResult['ok']);
+        if ($indexingFailed) {
+            $this->markVersionIndexState($newVersionId, 'failed', $reindexResult['error'] ?? 'unknown');
+            Logger::warning('website_crawl.reindex_failed', [
+                'document_id' => $documentId, 'reason' => $reindexResult['error'] ?? 'unknown',
+            ]);
+        } else {
+            $this->markVersionIndexState($newVersionId, 'indexed', null);
+        }
+
+        return ['new', $documentId, $indexingFailed, false];
+    }
+
+    /**
+     * BLOCKER B: retries /v1/reindex for a version whose content hasn't
+     * changed but whose rag_index_status is not (or no longer) 'indexed'
+     * -- either it never successfully indexed in the first place, or a
+     * prior stale-reconciliation unpublish left it needing republication.
+     * Only flips documents.is_published back to 1 on a SUCCESSFUL reindex
+     * -- never optimistically before confirming Qdrant actually agrees
+     * (same fail-safe principle as Blocker A).
+     *
+     * @return bool true if this retry FAILED (counts as indexing_failed)
+     */
+    private function reindexExistingVersion(
+        int $documentId, int $versionId, array $source, string $title, string $canonicalUrl, string $normalizedContent, string $contentHash
+    ): bool {
+        $result = $this->ragClient->reindexDocumentVersion([
+            'knowledge_base_id' => (int) $source['knowledge_base_id'],
+            'document_id' => $documentId,
+            'document_version_id' => $versionId,
+            'title' => $title,
+            'canonical_url' => $canonicalUrl,
+            'normalized_content' => $normalizedContent,
+            'content_hash' => $contentHash,
+            'is_published' => true,
+        ]);
+
+        if (empty($result['ok'])) {
+            $this->markVersionIndexState($versionId, 'failed', $result['error'] ?? 'unknown');
+            Logger::warning('website_crawl.reindex_retry_failed', [
+                'document_id' => $documentId, 'document_version_id' => $versionId,
+                'reason' => $result['error'] ?? 'unknown',
+            ]);
+            return true;
+        }
+
+        $this->markVersionIndexState($versionId, 'indexed', null);
+        Database::connection()->prepare('UPDATE documents SET is_published = 1, updated_at = NOW() WHERE id = :id')
+            ->execute([':id' => $documentId]);
+        return false;
+    }
+
+    /**
+     * BLOCKER B: after a successful (re)index of a document's current
+     * version, clean up any leftover 'superseded' versions for the same
+     * document whose vectors were never deleted -- covers the case where
+     * an earlier changed-page reindex failed (so the old-version delete
+     * step was never reached), and a LATER retry of the (by-then-current)
+     * version finally succeeds. Safe to call even when there is nothing
+     * to clean up (no-op).
+     *
+     * @return bool true if any cleanup call failed (sets cleanup_needed)
+     */
+    private function cleanupSupersededVersions(int $documentId, int $currentVersionId, array $source): bool
+    {
+        $pdo = Database::connection();
+        $stmt = $pdo->prepare(
+            "SELECT id FROM document_versions WHERE document_id = :document_id AND status = 'superseded' AND id != :current_id"
+        );
+        $stmt->execute([':document_id' => $documentId, ':current_id' => $currentVersionId]);
+        $supersededIds = $stmt->fetchAll(PDO::FETCH_COLUMN);
+
+        $anyFailed = false;
+        foreach ($supersededIds as $oldVersionId) {
+            $result = $this->ragClient->deleteDocumentVersion((int) $oldVersionId);
+            if (empty($result['ok'])) {
+                Logger::warning('website_crawl.superseded_cleanup_failed', [
+                    'document_id' => $documentId, 'version_id' => $oldVersionId,
+                    'reason' => $result['error'] ?? 'unknown',
+                ]);
+                $anyFailed = true;
+            }
+        }
+        return $anyFailed;
+    }
+
+    private function markVersionIndexState(int $versionId, string $status, ?string $error): void
+    {
+        $pdo = Database::connection();
+        $pdo->prepare(
+            "UPDATE document_versions SET rag_index_status = :status, rag_last_error = :error,
+                rag_indexed_at = CASE WHEN :status2 = 'indexed' THEN NOW() ELSE rag_indexed_at END
+             WHERE id = :id"
+        )->execute([':status' => $status, ':status2' => $status, ':error' => $error, ':id' => $versionId]);
+    }
+
+    private function createNewDocument(PDO $pdo, array $source, string $title, string $canonicalUrl, string $content, string $contentHash): int
+    {
+        $pdo->beginTransaction();
+        try {
+            $pdo->prepare(
+                "INSERT INTO documents (knowledge_base_id, category_id, website_source_id, title, source_type, is_published, created_by, created_at)
+                 VALUES (:kb_id, NULL, :source_id, :title, 'website_crawl', 1, :created_by, NOW())"
+            )->execute([
+                ':kb_id' => $source['knowledge_base_id'],
+                ':source_id' => $source['id'],
+                ':title' => $title,
+                ':created_by' => $source['created_by'],
+            ]);
+            $documentId = (int) $pdo->lastInsertId();
+
+            // BLOCKER B: newly created versions start 'pending' explicitly
+            // -- the column default ('indexed') exists only for
+            // backward-compatibility with rows that existed before
+            // migration 0013 ran (see that migration's own header); every
+            // NEW row created by this class must be explicit.
+            $pdo->prepare(
+                "INSERT INTO document_versions (document_id, canonical_url, normalized_content, content_hash, version, status, rag_index_status, created_by, created_at)
+                 VALUES (:document_id, :url, :content, :hash, 1, 'active', 'pending', :created_by, NOW())"
+            )->execute([
+                ':document_id' => $documentId, ':url' => $canonicalUrl, ':content' => $content,
+                ':hash' => $contentHash, ':created_by' => $source['created_by'],
+            ]);
+            $versionId = (int) $pdo->lastInsertId();
+
+            $pdo->prepare('UPDATE documents SET current_version_id = :vid WHERE id = :id')
+                ->execute([':vid' => $versionId, ':id' => $documentId]);
+
+            $pdo->commit();
+            return $documentId;
+        } catch (\Throwable $e) {
+            $pdo->rollBack();
+            throw $e;
+        }
+    }
+
+    private function createNewVersion(PDO $pdo, int $documentId, string $canonicalUrl, string $content, string $contentHash, array $source): int
+    {
+        $pdo->beginTransaction();
+        try {
+            $nextVersionStmt = $pdo->prepare(
+                'SELECT COALESCE(MAX(version), 0) + 1 FROM document_versions WHERE document_id = :document_id'
+            );
+            $nextVersionStmt->execute([':document_id' => $documentId]);
+            $nextVersion = (int) $nextVersionStmt->fetchColumn();
+
+            $pdo->prepare(
+                "INSERT INTO document_versions (document_id, canonical_url, normalized_content, content_hash, version, status, rag_index_status, created_by, created_at)
+                 VALUES (:document_id, :url, :content, :hash, :version, 'active', 'pending', :created_by, NOW())"
+            )->execute([
+                ':document_id' => $documentId, ':url' => $canonicalUrl, ':content' => $content,
+                ':hash' => $contentHash, ':version' => $nextVersion, ':created_by' => $source['created_by'],
+            ]);
+            $newVersionId = (int) $pdo->lastInsertId();
+
+            $pdo->prepare(
+                "UPDATE document_versions SET status = 'superseded' WHERE document_id = :document_id AND status = 'active' AND id != :new_id"
+            )->execute([':document_id' => $documentId, ':new_id' => $newVersionId]);
+
+            $pdo->prepare('UPDATE documents SET current_version_id = :vid, updated_at = NOW() WHERE id = :id')
+                ->execute([':vid' => $newVersionId, ':id' => $documentId]);
+
+            $pdo->commit();
+            return $newVersionId;
+        } catch (\Throwable $e) {
+            $pdo->rollBack();
+            throw $e;
+        }
+    }
+
+    private function getCurrentVersionId(PDO $pdo, int $documentId): int
+    {
+        $stmt = $pdo->prepare('SELECT current_version_id FROM documents WHERE id = :id');
+        $stmt->execute([':id' => $documentId]);
+        return (int) $stmt->fetchColumn();
+    }
+
+    /**
+     * BLOCKER A FIX: a stale document's is_published=false MUST be
+     * verifiably synchronized to Qdrant before it is counted as a
+     * successful stale operation. If the reindex(is_published=false)
+     * call fails, MySQL's is_published is rolled back to 1 (its previous
+     * value) rather than left at 0 while Qdrant may still consider the
+     * content published and searchable -- MySQL and Qdrant must never be
+     * allowed to silently disagree about publication state.
+     *
+     * @return array{0: int, 1: int} [successfulStaleCount, failedStaleCount]
+     */
+    private function reconcileStale(int $sourceId, array $seenDocumentIds, ?int $adminId): array
+    {
+        $pdo = Database::connection();
+
+        $placeholders = empty($seenDocumentIds) ? '' : implode(',', array_fill(0, count($seenDocumentIds), '?'));
+        $sql = "SELECT d.id, d.current_version_id, d.title
+                FROM documents d
+                WHERE d.website_source_id = ? AND d.is_published = 1";
+        $params = [$sourceId];
+        if ($placeholders !== '') {
+            $sql .= " AND d.id NOT IN ({$placeholders})";
+            $params = array_merge($params, $seenDocumentIds);
+        }
+
+        $stmt = $pdo->prepare($sql);
+        $stmt->execute($params);
+        $staleDocs = $stmt->fetchAll();
+
+        if (empty($staleDocs)) {
+            return [0, 0];
+        }
+
+        $source = $pdo->prepare('SELECT * FROM website_sources WHERE id = :id');
+        $source->execute([':id' => $sourceId]);
+        $source = $source->fetch();
+
+        $successCount = 0;
+        $failedCount = 0;
+        foreach ($staleDocs as $doc) {
+            $pdo->prepare('UPDATE documents SET is_published = 0, updated_at = NOW() WHERE id = :id')
+                ->execute([':id' => $doc['id']]);
+
+            $versionStmt = $pdo->prepare('SELECT * FROM document_versions WHERE id = :id');
+            $versionStmt->execute([':id' => $doc['current_version_id']]);
+            $version = $versionStmt->fetch();
+
+            $syncOk = false;
+            if ($version) {
+                $result = $this->ragClient->reindexDocumentVersion([
+                    'knowledge_base_id' => (int) $source['knowledge_base_id'],
+                    'document_id' => (int) $doc['id'],
+                    'document_version_id' => (int) $version['id'],
+                    'title' => $doc['title'],
+                    'canonical_url' => $version['canonical_url'],
+                    'normalized_content' => $version['normalized_content'],
+                    'content_hash' => $version['content_hash'],
+                    'is_published' => false,
+                ]);
+                $syncOk = !empty($result['ok']);
+                if (!$syncOk) {
+                    Logger::warning('website_crawl.stale_reindex_failed', ['document_id' => $doc['id'], 'reason' => $result['error'] ?? 'unknown']);
+                }
+            } else {
+                Logger::warning('website_crawl.stale_current_version_missing', ['document_id' => $doc['id']]);
+            }
+
+            if ($syncOk) {
+                Logger::audit('website_crawl.page_marked_stale', $adminId, 'document', (string) $doc['id'], ['website_source_id' => $sourceId]);
+                $successCount++;
+            } else {
+                // FAIL-SAFE: roll MySQL back rather than leave it claiming
+                // "unpublished" while Qdrant may still serve this content.
+                $pdo->prepare('UPDATE documents SET is_published = 1, updated_at = NOW() WHERE id = :id')
+                    ->execute([':id' => $doc['id']]);
+                Logger::warning('website_crawl.stale_unpublish_failed_rolled_back', ['document_id' => $doc['id'], 'website_source_id' => $sourceId]);
+                $failedCount++;
+            }
+        }
+
+        return [$successCount, $failedCount];
+    }
+
+    private function finalizeRun(int $runId, string $status, ?string $errorMessage, array $counts): void
+    {
+        $pdo = Database::connection();
+        $pdo->prepare(
+            "UPDATE website_crawl_runs SET
+                status = :status, error_message = :error_message, completed_at = NOW(),
+                pages_crawled = :pages_crawled, documents_new = :documents_new,
+                documents_changed = :documents_changed, documents_unchanged = :documents_unchanged,
+                documents_failed = :documents_failed, documents_indexing_failed = :documents_indexing_failed,
+                documents_stale = :documents_stale, documents_stale_failed = :documents_stale_failed,
+                cleanup_needed = :cleanup_needed
+             WHERE id = :id"
+        )->execute([
+            ':status' => $status,
+            ':error_message' => $errorMessage,
+            ':pages_crawled' => $counts['pages_crawled'] ?? 0,
+            ':documents_new' => $counts['documents_new'] ?? 0,
+            ':documents_changed' => $counts['documents_changed'] ?? 0,
+            ':documents_unchanged' => $counts['documents_unchanged'] ?? 0,
+            ':documents_failed' => $counts['documents_failed'] ?? 0,
+            ':documents_indexing_failed' => $counts['documents_indexing_failed'] ?? 0,
+            ':documents_stale' => $counts['documents_stale'] ?? 0,
+            ':documents_stale_failed' => $counts['documents_stale_failed'] ?? 0,
+            ':cleanup_needed' => !empty($counts['cleanup_needed']) ? 1 : 0,
+            ':id' => $runId,
+        ]);
+    }
+
+    /**
+     * BLOCKER 2 (V2) support: used by WebsiteSourceController::delete()
+     * AND now also by ::update() (BLOCKER C, V3) to refuse changing
+     * knowledge_base_id/origin_url once a source has imported documents.
+     */
+    public function countImportedDocuments(int $sourceId): int
+    {
+        $pdo = Database::connection();
+        $stmt = $pdo->prepare('SELECT COUNT(*) FROM documents WHERE website_source_id = :id');
+        $stmt->execute([':id' => $sourceId]);
+        return (int) $stmt->fetchColumn();
+    }
+}

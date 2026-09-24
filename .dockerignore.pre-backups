@@ -1,0 +1,9 @@
+.git
+.env
+storage/documents/*
+storage/logs/*
+storage/cache/*
+node_modules
+vendor
+tests
+*.md

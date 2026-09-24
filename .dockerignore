@@ -1,0 +1,13 @@
+.git
+.env*
+!.env.example
+storage/documents/*
+storage/logs/*
+storage/cache/*
+storage/backups
+node_modules
+vendor
+tests
+*.md
+
+*.pre-*
