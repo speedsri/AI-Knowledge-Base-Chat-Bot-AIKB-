@@ -1,0 +1,26 @@
+FROM python:3.12-slim
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential curl && rm -rf /var/lib/apt/lists/*
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY app ./app
+COPY ingestion ./ingestion
+
+# Pre-warm tiktoken's cl100k_base encoding at build time (requires network
+# access during the image build) so container startup never depends on
+# reaching openaipublic.blob.core.windows.net at runtime. If this download
+# fails or is unreachable in a given environment, app/chunking.py falls back
+# to an approximate character-based chunker rather than crashing -- but this
+# build step means that fallback should never actually be needed in practice.
+RUN python -c "import tiktoken; tiktoken.get_encoding('cl100k_base')" || true
+
+# No CMD that runs a server or daemon -- this container is invoked manually,
+# per-command, via: docker compose -p dt-rag run --rm rag-ingestion ...
+# It does not restart automatically and performs no action on its own.
+ENTRYPOINT ["python", "-m", "ingestion.cli"]
+CMD ["--help"]

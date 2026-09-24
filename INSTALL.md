@@ -1,130 +1,101 @@
-# AI Knowledge Base - Fresh Installation
+# Complete Fresh Installation
 
-This package is intended for a clean server deployment.
+## Components
+- AIKB PHP/Apache/MySQL web application
+- DT-RAG Python API
+- Qdrant vector database
+- AI provider integration
+- Docker / Docker Compose
 
-## Recommended platform
-
-- Ubuntu 22.04/24.04 or comparable Linux server
-- Docker Engine
-- Docker Compose plugin
-- DNS/HTTPS reverse proxy or Cloudflare Tunnel for production
-- Outbound HTTPS access for configured AI providers
-
-## 1. Extract source
-
+## 1. Extract
 ```bash
-unzip ai-knowledge-base-fresh-install-*.zip
-cd ai-knowledge-base-fresh-install-*
+unzip aikb-complete-fresh-install-*.zip
+cd aikb-complete-fresh-install-*
 ```
 
-## 2. Create environment file
-
+## 2. Configure and start DT-RAG
 ```bash
+cd dt-rag
 cp .env.example .env
 nano .env
 ```
 
-Never commit `.env` to GitHub.
+Fill required provider/API values, internal RAG token and Qdrant settings.
 
-Configure the database passwords, application secret/encryption values,
-RAG/internal authentication values, and AI provider credentials required
-by your deployment.
+Start using the compose file included in `dt-rag/`, usually:
+```bash
+docker compose -f docker-compose.yml up -d --build
+```
 
-`CHAT_WIDGET_ENABLED` remains the emergency server-level widget master
-switch. Normal widget activation, allowed origins, URLs, rate limits and
-voice availability are managed from Admin -> System Settings after setup.
+Verify its health endpoint before continuing.
 
-## 3. Build and start AIKB
+## 3. Configure AIKB
+```bash
+cd ../ai-knowledge-base
+cp .env.example .env
+nano .env
+```
 
+Configure MySQL, security/session values, RAG URL/token and required provider settings.
+
+`CHAT_WIDGET_ENABLED` remains the emergency server-level master switch.
+Normal widget operation is managed from Admin -> System Settings.
+
+## 4. Start AIKB
 ```bash
 docker compose -f docker/docker-compose.yml build app
 docker compose -f docker/docker-compose.yml up -d
 ```
 
-If installing on a server that already hosts unrelated containers, do
-not use broad Docker cleanup commands.
-
-## 4. Run database migrations
-
+## 5. Run migrations
 ```bash
 docker compose -f docker/docker-compose.yml \
   run --rm --no-deps app \
   php scripts/migrate.php
 ```
 
-If the container entrypoint already runs migrations automatically, a
-second migration run should report that nothing remains to migrate.
-
-## 5. Verify containers
-
-```bash
-docker compose -f docker/docker-compose.yml ps
-```
-
-Confirm the application and MySQL containers are healthy/running.
-
-## 6. Open the application
-
-Typical routes:
-
-- `/login` - administrator login
-- `/admin` - administration dashboard
-- `/admin/system-settings` - public URL/chat/widget controls
-- `/chat` - public browser chat
-- `/assets/chat-widget.js` - embeddable widget asset
-- `/widget/message` - widget message endpoint
-
-## 7. Configure Admin -> System Settings
-
-Set:
-
+## 6. Configure Admin -> System Settings
+Configure:
 - Public Base URL
 - Public Chat ON/OFF
 - Embedded Widget ON/OFF
 - Allowed Widget Origins
-- Widget title
-- Greeting
-- Position
-- Language
+- Widget Title / Greeting
+- Position / Language
 - Widget Voice ON/OFF
-- Widget rate-limit values
+- Widget rate limits
 
-The Public Base URL field does not create DNS, SSL, Cloudflare or reverse
-proxy configuration. Configure those separately on the server/network.
+The Public Base URL field does not create DNS, SSL, Cloudflare Tunnel or a
+reverse proxy.
 
-## 8. Widget example
-
-Generate the final snippet from Admin -> System Settings.
-
-Example:
-
+## 7. Widget example
 ```html
 <script
-    src="https://ai.example.com/assets/chat-widget.js"
-    data-api="https://ai.example.com"
-    data-title="AI Assistant"
-    data-greeting="Hello. How can I help you today?"
-    data-position="right"
-    data-language="en-US"
-    data-voice="true">
+  src="https://ai.example.com/assets/chat-widget.js"
+  data-api="https://ai.example.com"
+  data-title="AI Assistant"
+  data-greeting="Hello. How can I help you today?"
+  data-position="right"
+  data-language="en-US"
+  data-voice="true">
 </script>
 ```
 
-Use exact allowed origins such as:
-
+Allowed origins must be exact origins such as:
 ```text
 https://example.com
 https://www.example.com
 ```
 
-Do not include page paths.
-
-## 9. Security checks
-
-- Use HTTPS.
-- Keep `.env` private.
-- Never put Gemini/API keys in browser JavaScript.
-- Keep database and internal RAG services private where possible.
-- Test an allowed widget origin and a rejected origin.
-- Change the initial admin password.
-- Back up MySQL and vector data before production upgrades.
+## 8. Acceptance tests
+- Admin login works.
+- Public `/chat` is 200 when enabled.
+- Public Chat OFF produces the disabled state.
+- DT-RAG health is healthy.
+- Known KB question is grounded.
+- Unknown question does not invent data.
+- Allowed widget origin succeeds.
+- Unauthorized origin returns 403 `origin_not_allowed`.
+- Widget OFF returns `widget_disabled`.
+- Widget Voice OFF hides voice controls in the generated snippet and rejects
+  forged voice-mode requests server-side.

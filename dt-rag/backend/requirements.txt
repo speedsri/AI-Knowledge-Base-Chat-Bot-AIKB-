@@ -1,0 +1,27 @@
+# V2: re-verified against current PyPI releases at patch time (see
+# CHANGELOG.md item 1), and actually pip-installed together to confirm a
+# mutually compatible set -- not just individually-current version numbers.
+#
+# google-genai jumped a major version (0.7.0 -> 2.23.0) -- verified
+# compatible by installing it and inspecting the client.aio.models.*
+# surface (unchanged) before pinning. It requires pydantic>=2.11, which is
+# why pydantic itself is NOT hard-pinned to an exact patch version below
+# (2.9.x, used in earlier drafts, is incompatible with google-genai 2.23.0
+# and pip's resolver will reject the combination).
+#
+# qdrant-client's .search() method has been REMOVED (not just deprecated)
+# as of 1.19.0 -- vector_store.py was rewritten to use query_points()
+# accordingly and this was verified against the actual installed 1.19.0
+# client (hasattr check confirmed search is gone).
+fastapi==0.115.0
+uvicorn[standard]==0.30.6
+pydantic>=2.11,<3.0
+pydantic-settings==2.5.2
+httpx>=0.28.1,<0.29
+qdrant-client==1.19.0
+google-genai==2.23.0
+beautifulsoup4==4.12.3
+lxml==5.3.0
+trafilatura==1.12.2
+tiktoken==0.7.0
+tenacity==9.0.0

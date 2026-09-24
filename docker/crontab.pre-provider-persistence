@@ -1,4 +1,0 @@
-# Installed to /etc/cron.d/aikb-worker inside the app container.
-# Must end with a newline; cron.d files require the user field (5 time
-# fields + user + command), unlike a per-user `crontab -e` file.
-* * * * * www-data /usr/local/bin/php /var/www/html/scripts/worker.php >> /var/www/html/storage/logs/worker.log 2>&1

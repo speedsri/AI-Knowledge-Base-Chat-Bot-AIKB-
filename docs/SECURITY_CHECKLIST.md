@@ -1,0 +1,13 @@
+# Security Checklist
+- [ ] Real `.env` files are outside Git
+- [ ] Default/admin passwords changed
+- [ ] HTTPS enabled
+- [ ] Debug mode disabled
+- [ ] MySQL not publicly exposed
+- [ ] Qdrant not publicly exposed unless protected
+- [ ] RAG internal token configured
+- [ ] AI provider keys stored server-side only
+- [ ] Widget origin allow-list reviewed
+- [ ] Unauthorized origin returns 403
+- [ ] Off-server backups configured
+- [ ] Restore process tested

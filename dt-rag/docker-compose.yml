@@ -1,0 +1,93 @@
+version: "3.9"
+
+# =====================================================================
+# dt-rag Phase B -- isolated Compose project on 192.168.1.220.
+# Deploy at /home/docker/dt-rag (or another clearly separate directory).
+#
+# CRITICAL: every command against this file MUST use -p dt-rag explicitly:
+#   docker compose -p dt-rag -f docker-compose.yml --env-file .env <command>
+#
+# This project shares NOTHING with the existing docker Compose project
+# that runs aikb_app, aikb_mysql, docker-mattermost-1, docker-n8n-1,
+# docker-db-1, docker-minio-1 -- different project name, different network,
+# different .env. See INSTALL_PHASE_B.md and ROLLBACK_PHASE_B.md.
+#
+# V2 correction (item 7): the previous healthcheck used `wget`, which was
+# never confirmed to exist inside the official qdrant/qdrant image (it is
+# a minimal Debian-based image that does not bundle wget/curl/nc as a
+# matter of policy). Rather than guess at a binary that may or may not be
+# present, this version REMOVES the container-level HEALTHCHECK for
+# rag-qdrant entirely and instead makes rag-api responsible for its own
+# startup readiness: rag-api retries connecting to Qdrant with a bounded
+# backoff at application startup (see app/main.py's
+# _ensure_collection_with_retry), and exits non-zero if Qdrant is still
+# unreachable after all retries -- so a real failure is still visible via
+# `docker compose ps` / `docker logs`, without depending on an unverified
+# binary inside a third-party image. rag-api's own HEALTHCHECK still uses
+# curl, which IS confirmed present (it's installed explicitly in
+# backend/Dockerfile's apt-get step, not assumed from a base image).
+# =====================================================================
+
+networks:
+  dt_rag_net:
+    name: dt_rag_net
+    driver: bridge
+
+volumes:
+  dt_rag_qdrant_data:
+    name: dt_rag_qdrant_data
+
+services:
+
+  rag-qdrant:
+    image: qdrant/qdrant:v1.19.0
+    container_name: dt-rag-qdrant
+    restart: unless-stopped
+    volumes:
+      - dt_rag_qdrant_data:/qdrant/storage
+    networks: [dt_rag_net]
+    # No HEALTHCHECK here -- see the correction note above. Verify the
+    # exact tag v1.19.0 exists on Docker Hub before pulling
+    # (https://hub.docker.com/r/qdrant/qdrant/tags) -- pin to the closest
+    # confirmed patch version if v1.19.0 specifically is not published.
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+
+  rag-api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: dt-rag-api
+    restart: unless-stopped
+    env_file: .env
+    ports:
+      # LAN-wide bind for now -- see INSTALL_PHASE_B.md's firewall note.
+      - "192.168.1.220:8500:8000"
+    networks: [dt_rag_net]
+    depends_on:
+      rag-qdrant:
+        condition: service_started   # NOT service_healthy -- see correction note above
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s   # gives the internal Qdrant-connection retry loop room to succeed
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+
+  rag-ingestion:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.ingestion
+    container_name: dt-rag-ingestion
+    env_file: .env
+    networks: [dt_rag_net]
+    depends_on:
+      rag-qdrant:
+        condition: service_started
+    profiles: ["manual"]
